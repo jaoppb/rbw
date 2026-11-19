@@ -557,6 +557,8 @@ impl SyncResCipher {
 
 #[derive(serde::Deserialize, Debug)]
 struct SyncResProfile {
+    #[serde(rename = "Id", alias = "id")]
+    id: String,
     #[serde(rename = "Key", alias = "key")]
     key: String,
     #[serde(rename = "PrivateKey", alias = "privateKey")]
@@ -760,6 +762,8 @@ struct CiphersPostReq {
     identity: Option<CipherIdentity>,
     #[serde(rename = "secureNote")]
     secure_note: Option<CipherSecureNote>,
+    #[serde(rename = "encryptedFor")]
+    encrypted_for: String,
 }
 
 #[derive(serde::Serialize, Debug)]
@@ -780,6 +784,8 @@ struct CiphersPutReq {
     secure_note: Option<CipherSecureNote>,
     #[serde(rename = "passwordHistory")]
     password_history: Vec<CiphersPutReqHistory>,
+    #[serde(rename = "encryptedFor")]
+    encrypted_for: String,
 }
 
 #[derive(serde::Serialize, Debug)]
@@ -1151,6 +1157,7 @@ impl Client {
     ) -> Result<(
         String,
         String,
+        String,
         std::collections::HashMap<String, String>,
         Vec<crate::db::Entry>,
     )> {
@@ -1179,6 +1186,7 @@ impl Client {
                     .map(|org| (org.id.clone(), org.key.clone()))
                     .collect();
                 Ok((
+                    sync_res.profile.id,
                     sync_res.profile.key,
                     sync_res.profile.private_key,
                     org_keys,
@@ -1201,6 +1209,7 @@ impl Client {
         data: &crate::db::EntryData,
         notes: Option<&str>,
         folder_id: Option<&str>,
+        encrypted_for: &str,
     ) -> Result<()> {
         let mut req = CiphersPostReq {
             ty: 1,
@@ -1211,6 +1220,7 @@ impl Client {
             card: None,
             identity: None,
             secure_note: None,
+            encrypted_for: encrypted_for.to_string(),
         };
         match data {
             crate::db::EntryData::Login {
@@ -1328,6 +1338,7 @@ impl Client {
         notes: Option<&str>,
         folder_uuid: Option<&str>,
         history: &[crate::db::HistoryEntry],
+        encrypted_for: &str,
     ) -> Result<()> {
         let mut req = CiphersPutReq {
             ty: match data {
@@ -1361,6 +1372,7 @@ impl Client {
                     password: entry.password.clone(),
                 })
                 .collect(),
+            encrypted_for: encrypted_for.to_string(),
         };
         match data {
             crate::db::EntryData::Login {
@@ -1765,4 +1777,68 @@ fn classify_login_error(error_res: &ConnectErrorRes, code: u16) -> Error {
 
     log::warn!("unexpected error received during login: {error_res:?}");
     Error::RequestFailed { status: code }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sync_res_profile_deserializes_id() {
+        let pascal = r#"{
+            "Id": "user-uuid-1",
+            "Key": "k",
+            "PrivateKey": "pk",
+            "Organizations": []
+        }"#;
+        let profile: SyncResProfile = serde_json::from_str(pascal).unwrap();
+        assert_eq!(profile.id, "user-uuid-1");
+
+        let camel = r#"{
+            "id": "user-uuid-2",
+            "key": "k",
+            "privateKey": "pk",
+            "organizations": []
+        }"#;
+        let profile: SyncResProfile = serde_json::from_str(camel).unwrap();
+        assert_eq!(profile.id, "user-uuid-2");
+    }
+
+    #[test]
+    fn test_ciphers_post_req_serializes_encrypted_for() {
+        let req = CiphersPostReq {
+            ty: 1,
+            folder_id: None,
+            name: "2.enc".to_string(),
+            notes: None,
+            login: None,
+            card: None,
+            identity: None,
+            secure_note: None,
+            encrypted_for: "user-uuid-1".to_string(),
+        };
+        let value = serde_json::to_value(&req).unwrap();
+        assert_eq!(value["encryptedFor"], "user-uuid-1");
+    }
+
+    #[test]
+    fn test_ciphers_put_req_serializes_encrypted_for_with_org() {
+        let req = CiphersPutReq {
+            ty: 1,
+            folder_id: None,
+            organization_id: Some("org-uuid-1".to_string()),
+            name: "2.enc".to_string(),
+            notes: None,
+            login: None,
+            card: None,
+            identity: None,
+            fields: vec![],
+            secure_note: None,
+            password_history: vec![],
+            encrypted_for: "user-uuid-1".to_string(),
+        };
+        let value = serde_json::to_value(&req).unwrap();
+        assert_eq!(value["encryptedFor"], "user-uuid-1");
+        assert_eq!(value["organizationId"], "org-uuid-1");
+    }
 }

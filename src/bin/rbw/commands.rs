@@ -1635,6 +1635,7 @@ pub fn add(
     if let (Some(access_token), ()) = rbw::actions::add(
         &access_token,
         refresh_token,
+        db.user_id.as_deref(),
         &name,
         &rbw::db::EntryData::Login {
             username,
@@ -1730,6 +1731,7 @@ pub fn generate(
         if let (Some(access_token), ()) = rbw::actions::add(
             &access_token,
             refresh_token,
+            db.user_id.as_deref(),
             &name,
             &rbw::db::EntryData::Login {
                 username,
@@ -1858,6 +1860,7 @@ pub fn edit(
     if let (Some(access_token), ()) = rbw::actions::edit(
         access_token,
         refresh_token,
+        db.user_id.as_deref(),
         &entry.id,
         entry.org_id.as_deref(),
         &entry.name,

@@ -86,6 +86,9 @@ pub enum Error {
     #[error("invalid mac")]
     InvalidMac,
 
+    #[error("missing user id; please run `rbw sync` first")]
+    MissingUserId,
+
     #[error("invalid two factor provider type: {ty}")]
     InvalidTwoFactorProvider { ty: String },
 
