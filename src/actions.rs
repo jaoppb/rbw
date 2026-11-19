@@ -141,6 +141,7 @@ pub async fn sync(
     (
         String,
         String,
+        String,
         std::collections::HashMap<String, String>,
         Vec<crate::db::Entry>,
     ),
@@ -161,6 +162,7 @@ async fn sync_once(
 ) -> Result<(
     String,
     String,
+    String,
     std::collections::HashMap<String, String>,
     Vec<crate::db::Entry>,
 )> {
@@ -171,31 +173,35 @@ async fn sync_once(
 pub fn add(
     access_token: &str,
     refresh_token: &str,
+    user_id: Option<&str>,
     name: &str,
     data: &crate::db::EntryData,
     notes: Option<&str>,
     folder_id: Option<&str>,
 ) -> Result<(Option<String>, ())> {
     with_exchange_refresh_token(access_token, refresh_token, |access_token| {
-        add_once(access_token, name, data, notes, folder_id)
+        add_once(access_token, user_id, name, data, notes, folder_id)
     })
 }
 
 fn add_once(
     access_token: &str,
+    user_id: Option<&str>,
     name: &str,
     data: &crate::db::EntryData,
     notes: Option<&str>,
     folder_id: Option<&str>,
 ) -> Result<()> {
+    let encrypted_for = resolve_user_id(user_id, access_token)?;
     let (client, _) = api_client()?;
-    client.add(access_token, name, data, notes, folder_id)?;
+    client.add(access_token, name, data, notes, folder_id, &encrypted_for)?;
     Ok(())
 }
 
 pub fn edit(
     access_token: &str,
     refresh_token: &str,
+    user_id: Option<&str>,
     id: &str,
     org_id: Option<&str>,
     name: &str,
@@ -208,6 +214,7 @@ pub fn edit(
     with_exchange_refresh_token(access_token, refresh_token, |access_token| {
         edit_once(
             access_token,
+            user_id,
             id,
             org_id,
             name,
@@ -222,6 +229,7 @@ pub fn edit(
 
 fn edit_once(
     access_token: &str,
+    user_id: Option<&str>,
     id: &str,
     org_id: Option<&str>,
     name: &str,
@@ -231,6 +239,7 @@ fn edit_once(
     folder_uuid: Option<&str>,
     history: &[crate::db::HistoryEntry],
 ) -> Result<()> {
+    let encrypted_for = resolve_user_id(user_id, access_token)?;
     let (client, _) = api_client()?;
     client.edit(
         access_token,
@@ -242,6 +251,7 @@ fn edit_once(
         notes,
         folder_uuid,
         history,
+        &encrypted_for,
     )?;
     Ok(())
 }
@@ -367,4 +377,78 @@ async fn api_client_async(
         config.client_cert_path(),
     );
     Ok((client, config))
+}
+
+#[derive(serde::Deserialize)]
+struct JwtClaims {
+    sub: Option<String>,
+}
+
+fn jwt_sub(access_token: &str) -> Option<String> {
+    let mut parts = access_token.split('.');
+    let _header = parts.next()?;
+    let payload = parts.next()?;
+    let _sig = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    let decoded =
+        crate::base64::decode_url_safe_no_pad(payload.trim_end_matches('='))
+            .ok()?;
+    let claims: JwtClaims = serde_json::from_slice(&decoded).ok()?;
+    claims.sub.filter(|sub| !sub.is_empty())
+}
+
+fn resolve_user_id(
+    user_id: Option<&str>,
+    access_token: &str,
+) -> Result<String> {
+    if let Some(user_id) = user_id.filter(|id| !id.is_empty()) {
+        return Ok(user_id.to_string());
+    }
+    jwt_sub(access_token).ok_or(Error::MissingUserId)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fake_jwt(payload_json: &str) -> String {
+        let header = crate::base64::encode_url_safe_no_pad(b"{}");
+        let payload =
+            crate::base64::encode_url_safe_no_pad(payload_json.as_bytes());
+        format!("{header}.{payload}.sig")
+    }
+
+    #[test]
+    fn test_resolve_user_id_prefers_db_user_id() {
+        let token = fake_jwt(r#"{"sub":"jwt-user"}"#);
+        let resolved = resolve_user_id(Some("db-user"), &token).unwrap();
+        assert_eq!(resolved, "db-user");
+    }
+
+    #[test]
+    fn test_resolve_user_id_falls_back_to_jwt_sub() {
+        let token = fake_jwt(r#"{"sub":"jwt-user"}"#);
+        let resolved = resolve_user_id(None, &token).unwrap();
+        assert_eq!(resolved, "jwt-user");
+    }
+
+    #[test]
+    fn test_resolve_user_id_errors_when_missing_in_db_and_token() {
+        assert!(matches!(
+            resolve_user_id(None, "opaque-token"),
+            Err(Error::MissingUserId)
+        ));
+        let no_sub = fake_jwt(r#"{"iss":"vaultwarden"}"#);
+        assert!(matches!(
+            resolve_user_id(None, &no_sub),
+            Err(Error::MissingUserId)
+        ));
+        let empty_sub = fake_jwt(r#"{"sub":""}"#);
+        assert!(matches!(
+            resolve_user_id(None, &empty_sub),
+            Err(Error::MissingUserId)
+        ));
+    }
 }

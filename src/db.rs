@@ -187,6 +187,7 @@ pub struct Db {
     pub protected_key: Option<String>,
     pub protected_private_key: Option<String>,
     pub protected_org_keys: std::collections::HashMap<String, String>,
+    pub user_id: Option<String>,
 
     pub entries: Vec<Entry>,
 }
@@ -312,5 +313,40 @@ impl Db {
             || self.iterations.is_none()
             || self.kdf.is_none()
             || self.protected_key.is_none()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_db_deserializes_without_user_id() {
+        let json = r#"{
+            "access_token": "tok",
+            "refresh_token": "ref",
+            "kdf": 0,
+            "iterations": 600000,
+            "memory": null,
+            "parallelism": null,
+            "protected_key": "pk",
+            "protected_private_key": "ppk",
+            "protected_org_keys": {},
+            "entries": []
+        }"#;
+        let db: Db = serde_json::from_str(json).unwrap();
+        assert_eq!(db.user_id, None);
+    }
+
+    #[test]
+    fn test_db_round_trips_user_id() {
+        let mut db = Db::new();
+        db.user_id = Some("00000000-0000-0000-0000-000000000001".to_string());
+        let json = serde_json::to_string(&db).unwrap();
+        let decoded: Db = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            decoded.user_id.as_deref(),
+            Some("00000000-0000-0000-0000-000000000001")
+        );
     }
 }
